@@ -1,0 +1,234 @@
+library(BSgenome.Dmelanogaster.UCSC.dm6) 
+
+genome <- BSgenome.Dmelanogaster.UCSC.dm6
+
+head(seqlengths(genome))
+
+# genome$chr1
+
+## Mettl3 gene/FBgn0039139/ENSFM00250000006886  
+## bdgp6/dm6
+## Chr3R 24,032,157 - 24,034,257
+
+dmseq = seqinfo(genome) 
+
+## Feature map for fly genome 
+
+library(biomaRt)
+library(Gviz)
+
+bmart = useMart(biomart = "ENSEMBL_MART_ENSEMBL", dataset = "dmelanogaster_gene_ensembl", 
+               host="https://may2024.archive.ensembl.org")
+
+fmap = Gviz:::.getBMFeatureMap()
+fmap["symbol"] = "ensembl_gene_id"
+
+
+mettl3loc = BiomartGeneRegionTrack(chromosome='chr3R', genome="dm6", start=24000000, end = 24070000, 
+                             biomart=bmart, 
+                             size=4, name="RefSeq", utr5="red3", utr3="red3", 
+                             protein_coding="black", col.line=NULL, cex=7,
+                             collapseTranscripts="longest",
+                             featureMap=fmap)
+
+
+
+
+listAttributes(bmart)[1:10,]
+data = useDataset('dmelanogaster_gene_ensembl', mart=bmart)
+chrom = '3R'
+
+utrs = getBM(attributes = c('ensembl_gene_id','chromosome_name','start_position',
+                           'end_position','strand','transcription_start_site'), 
+            filters='chromosome_name',
+            values=chrom,
+            mart=data)
+
+
+
+### ---------------------------------
+
+## Data loading 
+
+library(GenomicRanges)
+library(rtracklayer)
+library(IRanges)
+
+
+control = import.bed('GSE144244_H3K36Me3_Input_chr3R.bed')
+h3k36me3_r1 = import.bed('GSE144244_H3K36Me3_1.sorted_chr3R.bed')
+h3k36me3_r2 = import.bed('GSE144244_H3K36Me3_2.sorted_chr3R.bed')
+
+h3k36me3_r1
+h3k36me3_r2
+
+length(control)
+length(h3k36me3_r1)
+length(h3k36me3_r2)
+
+
+## Extend and trim 
+
+library(chipseq)
+
+extend_trim = function(sample){
+    median_len = median(estimate.mean.fraglen(sample) )
+    cat( paste0( 'Median read length ', round(median_len)))
+    extended_reads = resize(sample, width = median_len)
+    return( trim(extended_reads) )
+}
+
+control = extend_trim(control)
+h3k36me3_r1 = extend_trim(h3k36me3_r1)
+h3k36me3_r2 = extend_trim(h3k36me3_r2) 
+
+
+## Binning 
+
+dmseq
+
+binsize = 500
+bins = tileGenome(dmseq['chr3R'], tilewidth=binsize, cut.last.tile.in.chrom=TRUE)
+
+bins 
+
+bin_samples = function( sample, bins ){
+       mcols(bins)$score = countOverlaps( bins, sample) 
+       return( bins ) 
+}
+
+control_bins500=bin_samples(control,bins)
+h3k36me3_r1_bins500=bin_samples(h3k36me3_r1,bins)
+h3k36me3_r2_bins500=bin_samples(h3k36me3_r2,bins) 
+
+head(h3k36me3_r2_bins500)
+
+
+binloc_from=24000000/binsize 
+binloc_to=24070000/binsize
+
+plot(binloc_from:binloc_to, h3k36me3_r1_bins500$score[binloc_from:binloc_to], pch=16, cex.axis=1.2, cex.lab=1.4, xlab="chr3R", ylab="Read counts per bin" )
+plot(binloc_from:binloc_to, h3k36me3_r2_bins500$score[binloc_from:binloc_to], pch=16, cex.axis=1.2, cex.lab=1.4, xlab="chr3R", ylab="Read counts per bin" )
+
+
+export(control_bins500, con='Control_chr3R_bins500.bedGraph', format = "bedGraph")
+export(h3k36me3_r1_bins500, con='H3K36me3_r1_chr3R_bins500.bedGraph', format = "bedGraph")
+export(h3k36me3_r2_bins500, con='H3k36me3_r2_chr3R_bins500.bedGraph', format = "bedGraph")
+
+
+## Visualization 
+
+library(Gviz)
+
+bmart
+
+gat = GenomeAxisTrack( )
+
+
+plotTracks(c(mettl3loc, gat), from=24000000, to=24070000, transcriptAnnotation="ensembl_transcrip_id", window="auto", 
+           cex.title=1, fontsize=10 )
+
+
+control_track = DataTrack(control_bins500, 
+                        strand="*", genome="dm6", col.histogram='gray',
+                        fill.histogram='black', name="Control", col.axis="black",
+                        cex.axis=0.4, ylim=c(0,2000))
+
+h3k36me3_r1_track = DataTrack(h3k36me3_r1_bins500, 
+                        strand="*", genome="dm6", col.histogram='steelblue',
+                        fill.histogram='black', name="H3K36me3_r1", col.axis='steelblue',
+                        cex.axis=0.4, ylim=c(0,2000))
+
+h3k36me3_r2_track = DataTrack(h3k36me3_r2_bins500, 
+                        strand="*", genome="dm6", col.histogram='steelblue',
+                        fill.histogram='black', name="H3K36me3_r2", col.axis='steelblue',
+                        cex.axis=0.4, ylim=c(0,2000))
+
+
+plotTracks(c(control_track, h3k36me3_r1_track, h3k36me3_r2_track, mettl3loc, gat), from=24000000, to=24070000,
+           transcriptAnnotation="symbol", window="auto", 
+           type="histogram", cex.title=0.7, fontsize=10 )
+
+## Peaks 
+
+peaks_h3k36me3_r1 = import.bed('H3K36me3_R1_peaks_chr3R.bed')
+peaks_h3k36me3_r2 = import.bed('H3K36me3_R2_peaks_chr3R.bed')
+
+peaks1_track = AnnotationTrack(peaks_h3k36me3_r1, 
+                               genome="dm6", name='Peaks H3K36me3 R1',
+                               chromosome='chr3R',
+                               shape='box',fill='blue3',size=2)
+peaks2_track = AnnotationTrack(peaks_h3k36me3_r2, 
+                               genome="dm6", name='Peaks H3K36me3 R2',
+                               chromosome='chr3R',
+                               shape='box',fill='blue3',size=2)
+
+plotTracks(c(control_track, h3k36me3_r1_track, peaks1_track, h3k36me3_r2_track, peaks2_track, mettl3loc, gat), from=24000000, to=24070000,
+           transcriptAnnotation="symbol", window="auto", 
+           type="histogram", cex.title=0.7, fontsize=10 )
+
+dev.off()
+
+
+peaks_ovlp = findOverlaps( peaks_h3k36me3_r1, peaks_h3k36me3_r2 )
+peaks_ovlp
+
+
+unique_ovlp = min( length(unique( queryHits(peaks_ovlp) )), length(unique( subjectHits(peaks_ovlp) ) ) )
+
+
+library(VennDiagram)
+
+draw.pairwise.venn(area1=length(peaks_h3k36me3_r1),area2=length(peaks_h3k36me3_r2), 
+   cross.area=unique_ovlp, 
+   category=c("R1", "R2"), 
+   fill=c("steelblue", "blue3"), 
+   cat.cex=0.9)
+
+
+## Identify common peaks 
+
+common_peaks = Reduce(subsetByOverlaps, list(peaks_h3k36me3_r1, peaks_h3k36me3_r2))
+
+common_peaks_track = AnnotationTrack(common_peaks, genome="dm6", name='Common peaks',
+                                     chromosome='chr3R', shape='box',fill='green',size=2)
+
+plotTracks(c(control_track, h3k36me3_r1_track, peaks1_track, h3k36me3_r2_track, peaks2_track, common_peaks_track, mettl3loc, gat),
+           from=24000000, to=24070000,
+           transcriptAnnotation="symbol", window="auto", 
+           type="histogram", cex.title=0.5, fontsize=10 )
+
+
+
+
+
+### ========================================================================================
+
+## Promoter region 
+
+utrs$TSS = ifelse( utrs$strand == "1", utrs$start_position, utrs$end_position )
+head(utrs)
+
+promoter_regions = GRanges(seqnames = Rle( utrs$chromosome_name ),
+          ranges = IRanges( start = utrs$TSS - 200,
+                            end = utrs$TSS + 200 ),
+          strand = Rle( rep("*", nrow(utrs)) ),
+          gene = utrs$ensembl_gene_id)
+
+promoter_regions
+
+
+
+## Promoter overlaps 
+
+prom_h3k36me3_r1_ov = findOverlaps(peaks_h3k36me3_r1,promoter_regions)
+prom_h3k36me3_r1_ov 
+
+prom_h3k36me3_r2_ov = findOverlaps(peaks_h3k36me3_r2,promoter_regions)
+prom_h3k36me3_r2_ov
+
+
+posOv_h3k36me3_r1 = utrs[ unique( queryHits(prom_h3k36me3_r1_ov) ) ,]
+
+posOv_h3k36me3_r2= utrs[ unique( queryHits(prom_h3k36me3_r2_ov) ) ,]
+
